@@ -18,7 +18,6 @@ class AlbumController extends Controller
             'category' => 'required|string',
         ]);
 
-        // Genera un código único de 6 caracteres
         do {
             $code = strtoupper(Str::random(6));
         } while (Album::where('code', $code)->exists());
@@ -52,22 +51,12 @@ class AlbumController extends Controller
     {
         $user = $request->user();
 
-        $albums = \App\Models\Album::with(['challenges.memories'])
+        $albums = Album::with(['challenges.memories'])
             ->where('user_id', $user->id)
             ->get();
 
-        // Estadísticas generales
-        $total_albums = $albums->count();
-        $total_retos = $albums->sum(function($a) {
-            return $a->challenges->count();
-        });
-        $total_recuerdos = $albums->sum(function($a) {
-            return $a->challenges->flatMap->memories->count();
-        });
-        $total_likes = 84; // Simulado, ajusta según tu modelo
-
         return response()->json([
-            'albums' => $albums->map(function($album) {
+            'albums' => $albums->map(function ($album) {
                 return [
                     'id' => $album->id,
                     'title' => $album->title,
@@ -77,14 +66,14 @@ class AlbumController extends Controller
                     'created_at' => $album->created_at,
                     'retos_count' => $album->challenges->count(),
                     'recuerdos_count' => $album->challenges->flatMap->memories->count(),
-                    'bgImage' => $album->bg_image ?? null, // <-- este campo
+                    'bgImage' => $album->bg_image ?? null,
                 ];
             }),
             'stats' => [
-                'total_albums' => $total_albums,
-                'total_retos' => $total_retos,
-                'total_recuerdos' => $total_recuerdos,
-                'total_likes' => $total_likes,
+                'total_albums' => $albums->count(),
+                'total_retos' => $albums->sum(fn($a) => $a->challenges->count()),
+                'total_recuerdos' => $albums->sum(fn($a) => $a->challenges->flatMap->memories->count()),
+                'total_likes' => 84,
             ]
         ]);
     }
@@ -92,10 +81,9 @@ class AlbumController extends Controller
     public function findByCode(Request $request)
     {
         $code = $request->input('code');
-        
-        \Log::info('Buscando álbum con código: ' . $code);
-        
-        $album = \App\Models\Album::with(['challenges.memories'])->where('code', $code)->first();
+        \Log::info("Buscando álbum con código: {$code}");
+
+        $album = Album::with(['challenges.memories'])->where('code', $code)->first();
 
         if (!$album) {
             return response()->json(['message' => 'Álbum no encontrado'], 404);
@@ -107,41 +95,48 @@ class AlbumController extends Controller
     public function updateBgImage(Request $request, Album $album)
     {
         if ($request->hasFile('bg_image')) {
-            $file = $request->file('bg_image');
-            $filename = uniqid() . '.' . $file->getClientOriginalExtension();
-            $fileContent = file_get_contents($file->getRealPath());
+            try {
+                $file = $request->file('bg_image');
+                $filename = uniqid() . '.' . $file->getClientOriginalExtension();
+                $fileContent = file_get_contents($file->getRealPath());
 
-            // Subir a Supabase Storage
-            $response = Http::withHeaders([
-                'apikey' => env('SUPABASE_KEY'),
-                'Authorization' => 'Bearer ' . env('SUPABASE_KEY'),
-                'Content-Type' => $file->getMimeType(), // <- mejor usar el mime real
-            ])->put(
-                env('SUPABASE_URL') . '/storage/v1/object/' . env('SUPABASE_BUCKET') . '/' . $filename,
-                $fileContent
-            );
+                $response = Http::withHeaders([
+                    'apikey' => env('SUPABASE_KEY'),
+                    'Authorization' => 'Bearer ' . env('SUPABASE_KEY'),
+                    'Content-Type' => $file->getMimeType(),
+                ])->put(
+                    rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/' . env('SUPABASE_BUCKET') . '/' . $filename,
+                    $fileContent
+                );
 
-            if ($response->failed()) {
-                \Log::error('Error al subir a Supabase: ' . $response->body());
+                if ($response->failed()) {
+                    \Log::error('Error al subir imagen a Supabase: ' . $response->body());
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No se pudo subir la imagen',
+                        'error' => $response->json()
+                    ], 500);
+                }
+
+                $publicUrl = rtrim(env('SUPABASE_URL'), '/') .
+                    '/storage/v1/object/public/' .
+                    env('SUPABASE_BUCKET') . '/' . $filename;
+
+                $album->bg_image = $publicUrl;
+                $album->save();
+
+                return response()->json([
+                    'success' => true,
+                    'bg_image' => $album->bg_image
+                ]);
+            } catch (\Exception $e) {
+                \Log::error('Excepción al subir imagen: ' . $e->getMessage());
                 return response()->json([
                     'success' => false,
-                    'message' => 'No se pudo subir la imagen'
+                    'message' => 'Error interno',
+                    'error' => $e->getMessage()
                 ], 500);
             }
-
-            // Construir URL pública
-            $publicUrl = rtrim(env('SUPABASE_URL'), '/') .
-                '/storage/v1/object/public/' .
-                env('SUPABASE_BUCKET') . '/' . $filename;
-
-            // Guardar en BD
-            $album->bg_image = $publicUrl;
-            $album->save();
-
-            return response()->json([
-                'success' => true,
-                'bg_image' => $album->bg_image
-            ]);
         }
 
         return response()->json([
@@ -149,5 +144,4 @@ class AlbumController extends Controller
             'message' => 'No se recibió ningún archivo'
         ], 400);
     }
-
 }
