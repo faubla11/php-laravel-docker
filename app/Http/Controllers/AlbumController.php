@@ -104,37 +104,50 @@ class AlbumController extends Controller
         return response()->json($album);
     }
 
-public function updateBgImage(Request $request, Album $album)
-{
-    if ($request->hasFile('bg_image')) {
-        $file = $request->file('bg_image');
-        $filename = uniqid() . '.' . $file->getClientOriginalExtension();
-        $fileContent = file_get_contents($file->getRealPath());
+    public function updateBgImage(Request $request, Album $album)
+    {
+        if ($request->hasFile('bg_image')) {
+            $file = $request->file('bg_image');
+            $filename = uniqid() . '.' . $file->getClientOriginalExtension();
+            $fileContent = file_get_contents($file->getRealPath());
 
-        // Subir a Supabase Storage
-        $response = Http::withHeaders([
-            'apikey' => env('SUPABASE_KEY'),
-            'Authorization' => 'Bearer ' . env('SUPABASE_KEY'),
-            'Content-Type' => 'application/octet-stream',
-        ])->put(
-            env('SUPABASE_URL') . '/storage/v1/object/' . env('SUPABASE_BUCKET') . '/' . $filename,
-            $fileContent
-        );
+            // Subir a Supabase Storage
+            $response = Http::withHeaders([
+                'apikey' => env('SUPABASE_KEY'),
+                'Authorization' => 'Bearer ' . env('SUPABASE_KEY'),
+                'Content-Type' => $file->getMimeType(), // <- mejor usar el mime real
+            ])->put(
+                env('SUPABASE_URL') . '/storage/v1/object/' . env('SUPABASE_BUCKET') . '/' . $filename,
+                $fileContent
+            );
 
-        if ($response->failed()) {
-            return response()->json(['success' => false, 'message' => 'No se pudo subir la imagen'], 500);
+            if ($response->failed()) {
+                \Log::error('Error al subir a Supabase: ' . $response->body());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se pudo subir la imagen'
+                ], 500);
+            }
+
+            // Construir URL pública
+            $publicUrl = rtrim(env('SUPABASE_URL'), '/') .
+                '/storage/v1/object/public/' .
+                env('SUPABASE_BUCKET') . '/' . $filename;
+
+            // Guardar en BD
+            $album->bg_image = $publicUrl;
+            $album->save();
+
+            return response()->json([
+                'success' => true,
+                'bg_image' => $album->bg_image
+            ]);
         }
 
-        // URL pública de la imagen
-        $publicUrl = env('SUPABASE_URL') . '/storage/v1/object/public/' . env('SUPABASE_BUCKET') . '/' . $filename;
-
-        // Guardar en la base de datos
-        $album->bg_image = $publicUrl;
-        $album->save();
-
-        return response()->json(['success' => true, 'bg_image' => $album->bg_image]);
+        return response()->json([
+            'success' => false,
+            'message' => 'No se recibió ningún archivo'
+        ], 400);
     }
 
-    return response()->json(['success' => false, 'message' => 'No se recibió ningún archivo'], 400);
-}
 }
