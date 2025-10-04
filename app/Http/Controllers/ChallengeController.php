@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\Challenge;
-
+use Illuminate\Support\Facades\Http;
 class ChallengeController extends Controller
 {
     public function store(Request $request, $albumId)

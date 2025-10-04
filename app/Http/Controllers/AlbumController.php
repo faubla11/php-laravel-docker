@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\Models\Album;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Http;
 
 class AlbumController extends Controller
 {
@@ -103,14 +104,37 @@ class AlbumController extends Controller
         return response()->json($album);
     }
 
-    public function updateBgImage(Request $request, Album $album)
-    {
-        if ($request->hasFile('bg_image')) {
-            $path = $request->file('bg_image')->store('albums', 'public');
-            $album->bg_image = '/storage/' . $path;
-            $album->save();
-            return response()->json(['success' => true, 'bg_image' => $album->bg_image]);
+public function updateBgImage(Request $request, Album $album)
+{
+    if ($request->hasFile('bg_image')) {
+        $file = $request->file('bg_image');
+        $filename = uniqid() . '.' . $file->getClientOriginalExtension();
+        $fileContent = file_get_contents($file->getRealPath());
+
+        // Subir a Supabase Storage
+        $response = Http::withHeaders([
+            'apikey' => env('SUPABASE_KEY'),
+            'Authorization' => 'Bearer ' . env('SUPABASE_KEY'),
+            'Content-Type' => 'application/octet-stream',
+        ])->put(
+            env('SUPABASE_URL') . '/storage/v1/object/' . env('SUPABASE_BUCKET') . '/' . $filename,
+            $fileContent
+        );
+
+        if ($response->failed()) {
+            return response()->json(['success' => false, 'message' => 'No se pudo subir la imagen'], 500);
         }
-        return response()->json(['success' => false], 400);
+
+        // URL pública de la imagen
+        $publicUrl = env('SUPABASE_URL') . '/storage/v1/object/public/' . env('SUPABASE_BUCKET') . '/' . $filename;
+
+        // Guardar en la base de datos
+        $album->bg_image = $publicUrl;
+        $album->save();
+
+        return response()->json(['success' => true, 'bg_image' => $album->bg_image]);
     }
+
+    return response()->json(['success' => false, 'message' => 'No se recibió ningún archivo'], 400);
+}
 }
