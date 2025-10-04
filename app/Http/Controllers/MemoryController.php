@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\Memory;
+use Illuminate\Support\Facades\Http;
 
 class MemoryController extends Controller
 {
@@ -16,27 +17,37 @@ class MemoryController extends Controller
         ]);
 
         $filePath = null;
-    if ($request->hasFile('file')) {
-        $file = $request->file('file');
-        $fileName = uniqid() . '_' . $file->getClientOriginalName();
 
-        $supabase = new \Supabase\Storage\StorageClient(
-            env('SUPABASE_URL'),
-            env('SUPABASE_KEY')
-        );
+        if ($request->hasFile('file')) {
+            $file = $request->file('file');
+            $filename = uniqid() . '.' . $file->getClientOriginalExtension();
+            $fileContent = file_get_contents($file->getRealPath());
 
-        $bucket = env('SUPABASE_BUCKET', 'memories'); // bucket memories
-        $fileStream = fopen($file->getRealPath(), 'r');
+            // Subir a Supabase Storage
+            $response = Http::withHeaders([
+                'apikey' => env('SUPABASE_KEY'),
+                'Authorization' => 'Bearer ' . env('SUPABASE_KEY'),
+                'Content-Type' => $file->getMimeType(),
+            ])->put(
+                rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/' . env('SUPABASE_BUCKET') . '/' . $filename,
+                $fileContent
+            );
 
-        $supabase->from($bucket)->upload($fileName, $fileStream, [
-            'contentType' => $file->getMimeType()
-        ]);
+            if ($response->failed()) {
+                \Log::error('Error al subir archivo a Supabase: ' . $response->body());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se pudo subir el archivo'
+                ], 500);
+            }
 
-        // URL pública
-        $filePath = env('SUPABASE_URL') . "/storage/v1/object/public/{$bucket}/{$fileName}";
-    }
+            // Generar URL pública
+            $filePath = rtrim(env('SUPABASE_URL'), '/') .
+                '/storage/v1/object/public/' .
+                env('SUPABASE_BUCKET') . '/' . $filename;
+        }
 
-
+        // Guardar en BD
         $memory = Memory::create([
             'challenge_id' => $challengeId,
             'type' => $request->type,
