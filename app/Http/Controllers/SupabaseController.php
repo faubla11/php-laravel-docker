@@ -48,6 +48,12 @@ class SupabaseController extends Controller
             return response()->json(['message' => 'Configuración de Supabase incompleta en el servidor'], 500);
         }
 
+        $headers = [
+            'apikey' => $serviceKey,
+            'Authorization' => 'Bearer ' . $serviceKey,
+            'Content-Type' => 'application/json',
+        ];
+
         // Sanity check: ensure the bucket exists in Supabase Storage. This will
         // help diagnose if the bucket name is wrong or the service key lacks
         // permissions.
@@ -77,25 +83,22 @@ class SupabaseController extends Controller
             'Content-Type' => 'application/json',
         ];
 
-        // Use the body-based sign endpoint directly. This is the recommended
-        // way to sign new objects (uploads) because the url-based form often
-        // expects the object to already exist when signing for downloads.
+        // Use the url-based sign endpoint: POST /storage/v1/object/sign/{bucket}/{path}
+        // Pass method='PUT' and content_type so Supabase signs an upload URL.
         try {
-            $altEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign';
-
+            $signEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign/' . $supabaseBucket . '/' . $filename;
             $payload = [
-                'bucket' => $supabaseBucket,
-                'path' => $filename,
                 'expiresIn' => 60 * 15,
                 'method' => 'PUT',
                 'content_type' => $contentType,
             ];
 
-            \Log::info('Calling Supabase sign (body-based)', ['endpoint' => $altEndpoint, 'payload' => ['bucket' => $supabaseBucket, 'path' => $filename, 'method' => 'PUT']]);
+            \Log::info('Calling Supabase sign (url-based)', ['endpoint' => $signEndpoint, 'payload' => ['path' => $filename, 'method' => 'PUT']]);
 
-            $resp = Http::withHeaders($headers)->post($altEndpoint, $payload);
+            $resp = Http::withHeaders($headers)->post($signEndpoint, $payload);
+            \Log::info('Supabase sign response', ['status' => $resp->status(), 'body' => $resp->body()]);
         } catch (\Exception $e) {
-            \Log::error('Excepción en intento de sign endpoint (body-based): ' . $e->getMessage());
+            \Log::error('Excepción en intento de sign endpoint (url-based): ' . $e->getMessage());
             return response()->json(['message' => 'Error llamando a Supabase', 'error' => $e->getMessage()], 500);
         }
 
