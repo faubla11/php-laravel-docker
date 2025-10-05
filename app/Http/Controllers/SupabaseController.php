@@ -73,34 +73,104 @@ class SupabaseController extends Controller
             // continue to try signing; but surface a helpful message
         }
 
-        // Supabase storage signed URL endpoint
-        // POST /storage/v1/object/sign/{bucket}/{path}
-        $signEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign/' . $supabaseBucket . '/' . $filename;
-
+        // Prepare headers for signing attempts
         $headers = [
             'apikey' => $serviceKey,
             'Authorization' => 'Bearer ' . $serviceKey,
             'Content-Type' => 'application/json',
         ];
 
-        // Use the url-based sign endpoint: POST /storage/v1/object/sign/{bucket}/{path}
-        // Pass method='PUT' and content_type so Supabase signs an upload URL.
+        $attempts = [];
+
+        // First: try the body-based signing endpoint (some clusters support POST /storage/v1/object/sign with body)
         try {
-            $signEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign/' . $supabaseBucket . '/' . $filename;
-            $payload = [
+            $bodySignEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign';
+            $bodyPayload = [
+                'bucket' => $supabaseBucket,
+                'path' => $filename,
                 'expiresIn' => 60 * 15,
                 'method' => 'PUT',
                 'content_type' => $contentType,
             ];
 
-            \Log::info('Calling Supabase sign (url-based)', ['endpoint' => $signEndpoint, 'payload' => ['path' => $filename, 'method' => 'PUT']]);
+            \Log::info('Calling Supabase sign (body-based)', ['endpoint' => $bodySignEndpoint, 'payload' => $bodyPayload]);
+            $bodyResp = Http::withHeaders($headers)->post($bodySignEndpoint, $bodyPayload);
+            $attempts['body'] = ['endpoint' => $bodySignEndpoint, 'status' => $bodyResp->status(), 'body' => $bodyResp->body(), 'headers' => $bodyResp->headers()];
+            \Log::info('Supabase sign (body) response', ['status' => $bodyResp->status(), 'body' => $bodyResp->body()]);
+            if ($bodyResp->successful()) {
+                $data = $bodyResp->json();
+                \Log::info('Signed URL generated (body-based)', ['signed_url' => $data['signed_url'] ?? null]);
+                $publicUrl = rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/public/' . env('SUPABASE_BUCKET') . '/' . $filename;
+                return response()->json([
+                    'upload_url' => $data['signed_url'] ?? null,
+                    'public_url' => $publicUrl,
+                    'path' => $filename,
+                    'expires_in' => $data['expires_in'] ?? 900,
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('Excepción en intento de sign endpoint (body-based): ' . $e->getMessage());
+            $attempts['body'] = ['endpoint' => $bodySignEndpoint ?? null, 'error' => $e->getMessage()];
+        }
 
-            $resp = Http::withHeaders($headers)->post($signEndpoint, $payload);
-            \Log::info('Supabase sign response', ['status' => $resp->status(), 'body' => $resp->body()]);
+        // Second: try the url-based signing endpoint: POST /storage/v1/object/sign/{bucket}/{path}
+        try {
+            $urlSignEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign/' . $supabaseBucket . '/' . $filename;
+            $urlPayload = [
+                'expiresIn' => 60 * 15,
+                'method' => 'PUT',
+                'content_type' => $contentType,
+            ];
+
+            \Log::info('Calling Supabase sign (url-based)', ['endpoint' => $urlSignEndpoint, 'payload' => $urlPayload]);
+            $urlResp = Http::withHeaders($headers)->post($urlSignEndpoint, $urlPayload);
+            $attempts['url'] = ['endpoint' => $urlSignEndpoint, 'status' => $urlResp->status(), 'body' => $urlResp->body(), 'headers' => $urlResp->headers()];
+            \Log::info('Supabase sign (url) response', ['status' => $urlResp->status(), 'body' => $urlResp->body()]);
+            if ($urlResp->successful()) {
+                $data = $urlResp->json();
+                \Log::info('Signed URL generated (url-based)', ['signed_url' => $data['signed_url'] ?? null]);
+                $publicUrl = rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/public/' . env('SUPABASE_BUCKET') . '/' . $filename;
+                return response()->json([
+                    'upload_url' => $data['signed_url'] ?? null,
+                    'public_url' => $publicUrl,
+                    'path' => $filename,
+                    'expires_in' => $data['expires_in'] ?? 900,
+                ]);
+            }
         } catch (\Exception $e) {
             \Log::error('Excepción en intento de sign endpoint (url-based): ' . $e->getMessage());
-            return response()->json(['message' => 'Error llamando a Supabase', 'error' => $e->getMessage()], 500);
+            $attempts['url'] = ['endpoint' => $urlSignEndpoint ?? null, 'error' => $e->getMessage()];
         }
+
+        // Third: try a GET variant (some proxies or older clusters expose a GET-based signing)
+        try {
+            $getSignEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign/' . $supabaseBucket . '/' . $filename;
+            $query = http_build_query(['method' => 'PUT', 'expiresIn' => 60 * 15]);
+            $getUrl = $getSignEndpoint . '?' . $query;
+            \Log::info('Calling Supabase sign (GET-variant)', ['endpoint' => $getUrl]);
+            $getResp = Http::withHeaders($headers)->get($getUrl);
+            $attempts['get'] = ['endpoint' => $getUrl, 'status' => $getResp->status(), 'body' => $getResp->body(), 'headers' => $getResp->headers()];
+            \Log::info('Supabase sign (get) response', ['status' => $getResp->status(), 'body' => $getResp->body()]);
+            if ($getResp->successful()) {
+                $data = $getResp->json();
+                $publicUrl = rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/public/' . env('SUPABASE_BUCKET') . '/' . $filename;
+                return response()->json([
+                    'upload_url' => $data['signed_url'] ?? null,
+                    'public_url' => $publicUrl,
+                    'path' => $filename,
+                    'expires_in' => $data['expires_in'] ?? 900,
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('Excepción en intento de sign endpoint (get-variant): ' . $e->getMessage());
+            $attempts['get'] = ['endpoint' => $getSignEndpoint ?? null, 'error' => $e->getMessage()];
+        }
+
+        // If we reached here both attempts failed. Log attempts and return detailed info for debugging.
+        \Log::error('Both signing attempts failed', ['attempts' => $attempts]);
+        // Normalize response body snippets for client consumption
+        $detail = $attempts;
+        return response()->json(['message' => 'No se pudo generar signed url', 'status' => 400, 'detail' => $detail], 502);
 
         if ($resp->failed()) {
             $status = $resp->status();
