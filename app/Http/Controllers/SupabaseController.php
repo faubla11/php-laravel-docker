@@ -30,22 +30,41 @@ class SupabaseController extends Controller
 
         $contentType = $request->input('content_type') ?? 'application/octet-stream';
 
+        // Validate environment
+        $supabaseUrl = env('SUPABASE_URL');
+        $supabaseBucket = env('SUPABASE_BUCKET');
+        $serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');
+
+        if (!$supabaseUrl || !$supabaseBucket || !$serviceKey) {
+            \Log::error('Faltan variables de entorno SUPABASE_URL/SUPABASE_BUCKET/SUPABASE_SERVICE_ROLE_KEY');
+            return response()->json(['message' => 'Configuración de Supabase incompleta en el servidor'], 500);
+        }
+
         // Supabase storage signed URL endpoint
         // POST /storage/v1/object/sign/{bucket}/{path}
-        $signEndpoint = rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/sign/' . env('SUPABASE_BUCKET') . '/' . $filename;
+        $signEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign/' . $supabaseBucket . '/' . $filename;
 
-        $resp = Http::withHeaders([
-            'apikey' => env('SUPABASE_SERVICE_ROLE_KEY'),
-            'Authorization' => 'Bearer ' . env('SUPABASE_SERVICE_ROLE_KEY'),
-            'Content-Type' => 'application/json',
-        ])->post($signEndpoint, [
-            'expires_in' => 60 * 15, // 15 minutes
-            'transform' => false,
-        ]);
+        try {
+            $resp = Http::withHeaders([
+                'apikey' => $serviceKey,
+                'Authorization' => 'Bearer ' . $serviceKey,
+                'Content-Type' => 'application/json',
+            ])->post($signEndpoint, [
+                'expires_in' => 60 * 15, // 15 minutes
+                'transform' => false,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Excepción al llamar a Supabase sign endpoint: ' . $e->getMessage());
+            return response()->json(['message' => 'Error llamando a Supabase', 'error' => $e->getMessage()], 500);
+        }
 
         if ($resp->failed()) {
-            \Log::error('Error generando signed url en Supabase: ' . $resp->body());
-            return response()->json(['message' => 'No se pudo generar signed url', 'detail' => $resp->json()], 500);
+            $status = $resp->status();
+            $body = $resp->body();
+            \Log::error("Error generando signed url en Supabase: status={$status} body={$body}");
+            $json = null;
+            try { $json = $resp->json(); } catch (\Exception $_) { $json = null; }
+            return response()->json(['message' => 'No se pudo generar signed url', 'status' => $status, 'detail' => $json, 'raw' => $body], 502);
         }
 
         $data = $resp->json();
