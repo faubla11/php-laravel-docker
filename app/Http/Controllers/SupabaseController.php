@@ -48,6 +48,25 @@ class SupabaseController extends Controller
             return response()->json(['message' => 'Configuración de Supabase incompleta en el servidor'], 500);
         }
 
+        // Sanity check: ensure the bucket exists in Supabase Storage. This will
+        // help diagnose if the bucket name is wrong or the service key lacks
+        // permissions.
+        try {
+            $bucketEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/bucket/' . $supabaseBucket;
+            \Log::info('Checking Supabase bucket exists', ['endpoint' => $bucketEndpoint]);
+            $bucketResp = Http::withHeaders($headers)->get($bucketEndpoint);
+            if ($bucketResp->failed()) {
+                $bstatus = $bucketResp->status();
+                $bbody = $bucketResp->body();
+                \Log::error('Bucket check failed', ['status' => $bstatus, 'body' => $bbody]);
+                return response()->json(['message' => 'Bucket no encontrado o error al consultar Supabase', 'status' => $bstatus, 'detail' => $bbody], 502);
+            }
+            \Log::info('Bucket exists according to Supabase', ['bucket' => $supabaseBucket]);
+        } catch (\Exception $e) {
+            \Log::error('Excepción al verificar bucket en Supabase: ' . $e->getMessage());
+            // continue to try signing; but surface a helpful message
+        }
+
         // Supabase storage signed URL endpoint
         // POST /storage/v1/object/sign/{bucket}/{path}
         $signEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign/' . $supabaseBucket . '/' . $filename;
@@ -58,32 +77,26 @@ class SupabaseController extends Controller
             'Content-Type' => 'application/json',
         ];
 
+        // Use the body-based sign endpoint directly. This is the recommended
+        // way to sign new objects (uploads) because the url-based form often
+        // expects the object to already exist when signing for downloads.
         try {
-            // Request a signed URL specifically for PUT (upload). Include content type
-            // so the signed URL is generated for an upload of that MIME type.
-            $resp = Http::withHeaders($headers)->post($signEndpoint, [
-                'expiresIn' => 60 * 15, // 15 minutes
+            $altEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign';
+
+            $payload = [
+                'bucket' => $supabaseBucket,
+                'path' => $filename,
+                'expiresIn' => 60 * 15,
                 'method' => 'PUT',
                 'content_type' => $contentType,
-            ]);
+            ];
+
+            \Log::info('Calling Supabase sign (body-based)', ['endpoint' => $altEndpoint, 'payload' => ['bucket' => $supabaseBucket, 'path' => $filename, 'method' => 'PUT']]);
+
+            $resp = Http::withHeaders($headers)->post($altEndpoint, $payload);
         } catch (\Exception $e) {
-            \Log::error('Excepción al llamar a Supabase sign endpoint (url-based): ' . $e->getMessage());
-            // Try alternative form: POST /storage/v1/object/sign with body { bucket, path }
-            try {
-                $altEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign';
-                // Use body-based signing and request method PUT as well.
-                $resp = Http::withHeaders($headers)->post($altEndpoint, [
-                    'bucket' => $supabaseBucket,
-                    'path' => $filename,
-                    'expiresIn' => 60 * 15,
-                    'method' => 'PUT',
-                    'content_type' => $contentType,
-                ]);
-                \Log::info('Intento alternativo de sign-upload (body-based) ejecutado', ['endpoint' => $altEndpoint]);
-            } catch (\Exception $e2) {
-                \Log::error('Excepción en intento alternativo sign endpoint: ' . $e2->getMessage());
-                return response()->json(['message' => 'Error llamando a Supabase', 'error' => $e2->getMessage()], 500);
-            }
+            \Log::error('Excepción en intento de sign endpoint (body-based): ' . $e->getMessage());
+            return response()->json(['message' => 'Error llamando a Supabase', 'error' => $e->getMessage()], 500);
         }
 
         if ($resp->failed()) {
