@@ -61,7 +61,6 @@ class SupabaseController extends Controller
         try {
             $resp = Http::withHeaders($headers)->post($signEndpoint, [
                 'expires_in' => 60 * 15, // 15 minutes
-                'transform' => false,
             ]);
         } catch (\Exception $e) {
             \Log::error('Excepción al llamar a Supabase sign endpoint (url-based): ' . $e->getMessage());
@@ -90,6 +89,7 @@ class SupabaseController extends Controller
         }
 
         $data = $resp->json();
+    \Log::info('Signed URL generated', ['signed_url' => $data['signed_url'] ?? null, 'expires_in' => $data['expires_in'] ?? null]);
 
         // public url for the object (may not be accessible for private buckets)
         $publicUrl = rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/public/' . env('SUPABASE_BUCKET') . '/' . $filename;
