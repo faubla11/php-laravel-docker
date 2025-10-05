@@ -15,6 +15,14 @@ class SupabaseController extends Controller
      */
     public function signUpload(Request $request)
     {
+        // Log caller info for debugging (avoid logging secrets)
+        try {
+            $caller = $request->user()?->id ?? $request->ip();
+        } catch (\Exception $_) {
+            $caller = $request->ip();
+        }
+        \Log::info('signUpload requested', ['caller' => $caller, 'name' => $request->input('name'), 'content_type' => $request->input('content_type')]);
+
         $request->validate([
             'name' => 'nullable|string',
             'content_type' => 'nullable|string',
@@ -44,18 +52,32 @@ class SupabaseController extends Controller
         // POST /storage/v1/object/sign/{bucket}/{path}
         $signEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign/' . $supabaseBucket . '/' . $filename;
 
+        $headers = [
+            'apikey' => $serviceKey,
+            'Authorization' => 'Bearer ' . $serviceKey,
+            'Content-Type' => 'application/json',
+        ];
+
         try {
-            $resp = Http::withHeaders([
-                'apikey' => $serviceKey,
-                'Authorization' => 'Bearer ' . $serviceKey,
-                'Content-Type' => 'application/json',
-            ])->post($signEndpoint, [
+            $resp = Http::withHeaders($headers)->post($signEndpoint, [
                 'expires_in' => 60 * 15, // 15 minutes
                 'transform' => false,
             ]);
         } catch (\Exception $e) {
-            \Log::error('Excepción al llamar a Supabase sign endpoint: ' . $e->getMessage());
-            return response()->json(['message' => 'Error llamando a Supabase', 'error' => $e->getMessage()], 500);
+            \Log::error('Excepción al llamar a Supabase sign endpoint (url-based): ' . $e->getMessage());
+            // Try alternative form: POST /storage/v1/object/sign with body { bucket, path }
+            try {
+                $altEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign';
+                $resp = Http::withHeaders($headers)->post($altEndpoint, [
+                    'bucket' => $supabaseBucket,
+                    'path' => $filename,
+                    'expires_in' => 60 * 15,
+                ]);
+                \Log::info('Intento alternativo de sign-upload (body-based) ejecutado', ['endpoint' => $altEndpoint]);
+            } catch (\Exception $e2) {
+                \Log::error('Excepción en intento alternativo sign endpoint: ' . $e2->getMessage());
+                return response()->json(['message' => 'Error llamando a Supabase', 'error' => $e2->getMessage()], 500);
+            }
         }
 
         if ($resp->failed()) {
