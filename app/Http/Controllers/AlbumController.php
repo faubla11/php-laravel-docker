@@ -94,6 +94,18 @@ class AlbumController extends Controller
 
     public function updateBgImage(Request $request, Album $album)
     {
+        // Prefer client-supplied URL (when the client uploaded directly to Supabase)
+        if ($request->filled('bg_image_url')) {
+            $album->bg_image = $request->input('bg_image_url');
+            $album->save();
+
+            return response()->json([
+                'success' => true,
+                'bg_image' => $album->bg_image
+            ]);
+        }
+
+        // Fallback: allow server-side upload if a file is provided
         if ($request->hasFile('bg_image')) {
             try {
                 $file = $request->file('bg_image');
@@ -101,8 +113,8 @@ class AlbumController extends Controller
                 $fileContent = file_get_contents($file->getRealPath());
 
                 $response = Http::withHeaders([
-                    'apikey' => env('SUPABASE_KEY'),
-                    'Authorization' => 'Bearer ' . env('SUPABASE_KEY'),
+                    'apikey' => env('SUPABASE_SERVICE_ROLE_KEY'),
+                    'Authorization' => 'Bearer ' . env('SUPABASE_SERVICE_ROLE_KEY'),
                     'Content-Type' => $file->getMimeType(),
                 ])->put(
                     rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/' . env('SUPABASE_BUCKET') . '/' . $filename,
@@ -141,7 +153,7 @@ class AlbumController extends Controller
 
         return response()->json([
             'success' => false,
-            'message' => 'No se recibió ningún archivo'
+            'message' => 'No se recibió ningún archivo ni bg_image_url'
         ], 400);
     }
 }

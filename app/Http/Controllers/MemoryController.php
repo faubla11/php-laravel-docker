@@ -13,20 +13,27 @@ class MemoryController extends Controller
         $request->validate([
             'type' => 'required|in:photo,video,note',
             'file' => 'nullable|file',
+            'file_url' => 'nullable|string',
             'note' => 'nullable|string',
         ]);
 
         $filePath = null;
 
-        if ($request->hasFile('file')) {
+        // If the client already uploaded the file directly to Supabase, it should
+        // send `file_url` (public or signed). In that case we don't re-upload.
+        if ($request->filled('file_url')) {
+            $filePath = $request->input('file_url');
+        } elseif ($request->hasFile('file')) {
             try {
                 $file = $request->file('file');
                 $filename = uniqid() . '.' . $file->getClientOriginalExtension();
                 $fileContent = file_get_contents($file->getRealPath());
 
+                // Use the service role key on the backend when uploading server-side
+                // (do not expose this key to clients).
                 $response = Http::withHeaders([
-                    'apikey' => env('SUPABASE_KEY'),
-                    'Authorization' => 'Bearer ' . env('SUPABASE_KEY'),
+                    'apikey' => env('SUPABASE_SERVICE_ROLE_KEY'),
+                    'Authorization' => 'Bearer ' . env('SUPABASE_SERVICE_ROLE_KEY'),
                     'Content-Type' => $file->getMimeType(),
                 ])->put(
                     rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/' . env('SUPABASE_BUCKET') . '/' . $filename,

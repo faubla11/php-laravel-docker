@@ -7,6 +7,7 @@ use App\Http\Controllers\UsuarioController;
 use App\Http\Controllers\AlbumController;
 use App\Http\Controllers\ChallengeController;
 use App\Http\Controllers\MemoryController;
+use App\Http\Controllers\SupabaseController;
 
 // Rutas públicas
 Route::post('/login', [AuthController::class, 'login']);
@@ -36,6 +37,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/albums', [AlbumController::class, 'index']);
     Route::post('/albums/{album}/bg-image', [AlbumController::class, 'updateBgImage']);
+    // Endpoint para solicitar signed upload URL para Supabase Storage
+    Route::post('/supabase/sign-upload', [SupabaseController::class, 'signUpload']);
 });
     Route::post('/albums/find-by-code', [AlbumController::class, 'findByCode']);
     Route::post('/challenges/{challenge}/validate', [ChallengeController::class, 'validateAnswer']);
