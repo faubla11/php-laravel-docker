@@ -57,6 +57,12 @@ class AlbumController extends Controller
 
         return response()->json([
             'albums' => $albums->map(function ($album) {
+                // Normalize bg_image to an absolute URL when it's a local storage path
+                $bg = $album->bg_image ?? null;
+                if ($bg && Str::startsWith($bg, '/')) {
+                    $bg = url($bg);
+                }
+
                 return [
                     'id' => $album->id,
                     'title' => $album->title,
@@ -66,7 +72,7 @@ class AlbumController extends Controller
                     'created_at' => $album->created_at,
                     'retos_count' => $album->challenges->count(),
                     'recuerdos_count' => $album->challenges->flatMap->memories->count(),
-                    'bgImage' => $album->bg_image ?? null,
+                    'bgImage' => $bg,
                 ];
             }),
             'stats' => [
@@ -87,6 +93,11 @@ class AlbumController extends Controller
 
         if (!$album) {
             return response()->json(['message' => 'Álbum no encontrado'], 404);
+        }
+
+        // Normalize bg_image to absolute URL if necessary
+        if ($album->bg_image && Str::startsWith($album->bg_image, '/')) {
+            $album->bg_image = url($album->bg_image);
         }
 
         return response()->json($album);
