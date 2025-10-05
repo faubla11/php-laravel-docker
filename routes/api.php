@@ -40,6 +40,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // Endpoint para solicitar signed upload URL para Supabase Storage
     Route::post('/supabase/sign-upload', [SupabaseController::class, 'signUpload']);
 });
-
+// Tolerate a common misspelling from clients and return a helpful message + log
+Route::post('/subabase/sign-upload', function (\Illuminate\Http\Request $request) {
+    \Log::warning('Client called misspelled endpoint /subabase/sign-upload', ['ip' => $request->ip(), 'headers' => $request->headers->all()]);
+    return response()->json(['message' => 'Endpoint incorrecto. Use /api/supabase/sign-upload (note la p en supabase).'], 400);
+});
     Route::post('/albums/find-by-code', [AlbumController::class, 'findByCode']);
     Route::post('/challenges/{challenge}/validate', [ChallengeController::class, 'validateAnswer']);
