@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use App\Models\User;
 
 class AuthController extends Controller
@@ -29,11 +30,59 @@ class AuthController extends Controller
         // Generar un token de acceso para el usuario
         $token = $user->createToken('TokenAcceso')->plainTextToken;
 
-        // Retornar el token en la respuesta
+        // Ensure user exists in Supabase Auth and get a Supabase session token
+        $supabaseSession = null;
+        try {
+            $supabaseUrl = rtrim(env('SUPABASE_URL'), '/');
+            $serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');
+            // Try to get a supabase session (token) via password grant
+            $resp = Http::withHeaders([
+                'apikey' => $serviceKey,
+                'Authorization' => 'Bearer ' . $serviceKey,
+                'Content-Type' => 'application/json'
+            ])->post($supabaseUrl . '/auth/v1/token?grant_type=password', [
+                'email' => $request->email,
+                'password' => $request->password,
+            ]);
+
+            if ($resp->ok() && isset($resp->json()['access_token'])) {
+                $supabaseSession = $resp->json();
+            } else {
+                // If invalid_credentials, attempt to create or upsert the user via admin API and retry
+                $createResp = Http::withHeaders([
+                    'apikey' => $serviceKey,
+                    'Authorization' => 'Bearer ' . $serviceKey,
+                    'Content-Type' => 'application/json'
+                ])->post($supabaseUrl . '/auth/v1/admin/users', [
+                    'email' => $request->email,
+                    'password' => $request->password,
+                    'email_confirm' => true,
+                    'user_metadata' => ['name' => $user->name ?? '']
+                ]);
+
+                // ignore createResp status (user may already exist). Try token endpoint again
+                $resp2 = Http::withHeaders([
+                    'apikey' => $serviceKey,
+                    'Authorization' => 'Bearer ' . $serviceKey,
+                    'Content-Type' => 'application/json'
+                ])->post($supabaseUrl . '/auth/v1/token?grant_type=password', [
+                    'email' => $request->email,
+                    'password' => $request->password,
+                ]);
+
+                if ($resp2->ok() && isset($resp2->json()['access_token'])) {
+                    $supabaseSession = $resp2->json();
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('Supabase auth sync error: ' . $e->getMessage());
+        }
+        // Retornar el token en la respuesta (incluyendo sesión de Supabase si está disponible)
         return response()->json([
             'message' => 'Inicio de sesión exitoso',
             'token' => $token,
             'user' => $user,
+            'supabase_session' => $supabaseSession,
         ], 200);
     }
 
@@ -76,9 +125,43 @@ class AuthController extends Controller
     // Generar el token
     $token = $user->createToken('TokenAcceso')->plainTextToken;
 
+    // Try to create user in Supabase Auth via admin API and get a session
+    $supabaseSession = null;
+    try {
+        $supabaseUrl = rtrim(env('SUPABASE_URL'), '/');
+        $serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');
+        $createResp = Http::withHeaders([
+            'apikey' => $serviceKey,
+            'Authorization' => 'Bearer ' . $serviceKey,
+            'Content-Type' => 'application/json'
+        ])->post($supabaseUrl . '/auth/v1/admin/users', [
+            'email' => $request->email,
+            'password' => $request->password,
+            'email_confirm' => true,
+            'user_metadata' => ['name' => $request->name ?? '']
+        ]);
+
+        // Attempt to get a supabase session via password grant
+        $resp = Http::withHeaders([
+            'apikey' => $serviceKey,
+            'Authorization' => 'Bearer ' . $serviceKey,
+            'Content-Type' => 'application/json'
+        ])->post($supabaseUrl . '/auth/v1/token?grant_type=password', [
+            'email' => $request->email,
+            'password' => $request->password,
+        ]);
+
+        if ($resp->ok() && isset($resp->json()['access_token'])) {
+            $supabaseSession = $resp->json();
+        }
+    } catch (\Exception $e) {
+        \Log::error('Supabase create user error: ' . $e->getMessage());
+    }
+
     return response()->json([
         'token' => $token,
         'user' => $user,
+        'supabase_session' => $supabaseSession,
     ], 201);
 }
 }
