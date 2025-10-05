@@ -60,7 +60,7 @@ class SupabaseController extends Controller
 
         try {
             $resp = Http::withHeaders($headers)->post($signEndpoint, [
-                'expires_in' => 60 * 15, // 15 minutes
+                'expiresIn' => 60 * 15, // 15 minutes
             ]);
         } catch (\Exception $e) {
             \Log::error('Excepción al llamar a Supabase sign endpoint (url-based): ' . $e->getMessage());
@@ -70,7 +70,7 @@ class SupabaseController extends Controller
                 $resp = Http::withHeaders($headers)->post($altEndpoint, [
                     'bucket' => $supabaseBucket,
                     'path' => $filename,
-                    'expires_in' => 60 * 15,
+                    'expiresIn' => 60 * 15,
                 ]);
                 \Log::info('Intento alternativo de sign-upload (body-based) ejecutado', ['endpoint' => $altEndpoint]);
             } catch (\Exception $e2) {
