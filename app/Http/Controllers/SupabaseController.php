@@ -166,8 +166,48 @@ class SupabaseController extends Controller
             $attempts['get'] = ['endpoint' => $getSignEndpoint ?? null, 'error' => $e->getMessage()];
         }
 
-        // If we reached here both attempts failed. Log attempts and return detailed info for debugging.
+        // If we reached here both attempts failed. Log attempts.
         \Log::error('Both signing attempts failed', ['attempts' => $attempts]);
+
+        // If client provided a multipart file in this same request, perform server-side upload
+        // so callers can POST a file to this endpoint as a fallback.
+        try {
+            if ($request->hasFile('file')) {
+                \Log::info('Signing failed but file provided; attempting server-side upload', ['caller' => $caller]);
+                $file = $request->file('file');
+                $origExt = $file->getClientOriginalExtension() ?: '';
+                $serverFilename = uniqid() . ($origExt ? '.' . $origExt : '');
+                $fileContent = file_get_contents($file->getRealPath());
+
+                $uploadEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/' . $supabaseBucket . '/' . $serverFilename;
+                $uploadHeaders = [
+                    'apikey' => $serviceKey,
+                    'Authorization' => 'Bearer ' . $serviceKey,
+                    'Content-Type' => $file->getMimeType(),
+                ];
+
+                \Log::info('Uploading file to Supabase storage (server-side)', ['endpoint' => $uploadEndpoint, 'filename' => $serverFilename]);
+                $uploadResp = Http::withHeaders($uploadHeaders)->put($uploadEndpoint, $fileContent);
+                \Log::info('Server-side upload response', ['status' => $uploadResp->status(), 'body' => $uploadResp->body()]);
+
+                if ($uploadResp->failed()) {
+                    \Log::error('Server-side upload to Supabase failed', ['status' => $uploadResp->status(), 'body' => $uploadResp->body()]);
+                    return response()->json(['message' => 'Error al subir archivo al storage via servidor', 'detail' => ['upload' => ['status' => $uploadResp->status(), 'body' => $uploadResp->body()], 'sign_attempts' => $attempts]], 502);
+                }
+
+                $publicUrl = rtrim(env('SUPABASE_URL'), '/') . '/storage/v1/object/public/' . $supabaseBucket . '/' . $serverFilename;
+                return response()->json([
+                    'upload_url' => null,
+                    'public_url' => $publicUrl,
+                    'path' => $serverFilename,
+                    'expires_in' => 0,
+                ], 200);
+            }
+        } catch (\Exception $e) {
+            \Log::error('Exception during server-side upload fallback: ' . $e->getMessage());
+            return response()->json(['message' => 'Error interno al intentar fallback server-side', 'error' => $e->getMessage(), 'attempts' => $attempts], 500);
+        }
+
         // Normalize response body snippets for client consumption
         $detail = $attempts;
         return response()->json(['message' => 'No se pudo generar signed url', 'status' => 400, 'detail' => $detail], 502);
