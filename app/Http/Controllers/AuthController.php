@@ -13,7 +13,7 @@ class AuthController extends Controller
 {
     public function login(Request $request)
     {
-        // Validación de los datos de entrada
+        // Validación de los datos de entradas
         $request->validate([
             'email' => 'required|email',
             'password' => 'required',
