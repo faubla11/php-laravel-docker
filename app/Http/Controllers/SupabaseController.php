@@ -59,18 +59,25 @@ class SupabaseController extends Controller
         ];
 
         try {
+            // Request a signed URL specifically for PUT (upload). Include content type
+            // so the signed URL is generated for an upload of that MIME type.
             $resp = Http::withHeaders($headers)->post($signEndpoint, [
                 'expiresIn' => 60 * 15, // 15 minutes
+                'method' => 'PUT',
+                'content_type' => $contentType,
             ]);
         } catch (\Exception $e) {
             \Log::error('Excepción al llamar a Supabase sign endpoint (url-based): ' . $e->getMessage());
             // Try alternative form: POST /storage/v1/object/sign with body { bucket, path }
             try {
                 $altEndpoint = rtrim($supabaseUrl, '/') . '/storage/v1/object/sign';
+                // Use body-based signing and request method PUT as well.
                 $resp = Http::withHeaders($headers)->post($altEndpoint, [
                     'bucket' => $supabaseBucket,
                     'path' => $filename,
                     'expiresIn' => 60 * 15,
+                    'method' => 'PUT',
+                    'content_type' => $contentType,
                 ]);
                 \Log::info('Intento alternativo de sign-upload (body-based) ejecutado', ['endpoint' => $altEndpoint]);
             } catch (\Exception $e2) {
