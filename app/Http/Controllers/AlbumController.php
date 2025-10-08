@@ -49,43 +49,52 @@ class AlbumController extends Controller
 
     public function index(Request $request)
     {
-        $user = $request->user();
+        try {
+            $user = $request->user();
 
-        $albums = Album::with(['challenges.memories'])
-            ->where('user_id', $user->id)
-            ->get();
+            $albums = Album::with(['challenges.memories'])
+                ->where('user_id', $user->id)
+                ->get();
 
-        // collect completed album ids for the current user
-        $completedIds = \App\Models\CompletedAlbum::where('user_id', $user->id)->pluck('album_id')->toArray();
+            // collect completed album ids for the current user
+            $completedIds = \App\Models\CompletedAlbum::where('user_id', $user->id)->pluck('album_id')->toArray();
 
-        return response()->json([
-            'albums' => $albums->map(function ($album) {
-                // Normalize bg_image to an absolute URL when it's a local storage path
-                $bg = $album->bg_image ?? null;
-                if ($bg && Str::startsWith($bg, '/')) {
-                    $bg = url($bg);
-                }
+            return response()->json([
+                'albums' => $albums->map(function ($album) use ($completedIds) {
+                    // Normalize bg_image to an absolute URL when it's a local storage path
+                    $bg = $album->bg_image ?? null;
+                    if ($bg && Str::startsWith($bg, '/')) {
+                        $bg = url($bg);
+                    }
 
-                return [
-                    'id' => $album->id,
-                    'title' => $album->title,
-                    'description' => $album->description,
-                    'category' => $album->category,
-                    'code' => $album->code,
-                    'created_at' => $album->created_at,
-                    'retos_count' => $album->challenges->count(),
-                    'recuerdos_count' => $album->challenges->flatMap->memories->count(),
-                    'bgImage' => $bg,
-                    'completed' => in_array($album->id, $completedIds),
-                ];
-            }),
-            'stats' => [
-                'total_albums' => $albums->count(),
-                'total_retos' => $albums->sum(fn($a) => $a->challenges->count()),
-                'total_recuerdos' => $albums->sum(fn($a) => $a->challenges->flatMap->memories->count()),
-                'total_likes' => 84,
-            ]
-        ]);
+                    return [
+                        'id' => $album->id,
+                        'title' => $album->title,
+                        'description' => $album->description,
+                        'category' => $album->category,
+                        'code' => $album->code,
+                        'created_at' => $album->created_at,
+                        'retos_count' => $album->challenges->count(),
+                        'recuerdos_count' => $album->challenges->flatMap->memories->count(),
+                        'bgImage' => $bg,
+                        'completed' => in_array($album->id, $completedIds),
+                    ];
+                }),
+                'stats' => [
+                    'total_albums' => $albums->count(),
+                    'total_retos' => $albums->sum(fn($a) => $a->challenges->count()),
+                    'total_recuerdos' => $albums->sum(fn($a) => $a->challenges->flatMap->memories->count()),
+                    'total_likes' => 84,
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            // Log the error and return a JSON response so the client doesn't try to parse HTML
+            \Log::error('Albums index exception: ' . $e->getMessage(), ['exception' => $e->getTraceAsString()]);
+            return response()->json([
+                'message' => 'Error interno al obtener los álbumes',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function findByCode(Request $request)
@@ -188,33 +197,41 @@ class AlbumController extends Controller
     // Return completed albums for the authenticated user
     public function completed(Request $request)
     {
-        $user = $request->user();
+        try {
+            $user = $request->user();
 
-        $completed = \App\Models\CompletedAlbum::with('album.challenges.memories')
-            ->where('user_id', $user->id)
-            ->get();
+            $completed = \App\Models\CompletedAlbum::with('album.challenges.memories')
+                ->where('user_id', $user->id)
+                ->get();
 
-        $albums = $completed->map(function ($c) {
-            $a = $c->album;
-            $bg = $a->bg_image ?? null;
-            if ($bg && Str::startsWith($bg, '/')) {
-                $bg = url($bg);
-            }
+            $albums = $completed->map(function ($c) {
+                $a = $c->album;
+                $bg = $a->bg_image ?? null;
+                if ($bg && Str::startsWith($bg, '/')) {
+                    $bg = url($bg);
+                }
 
-            return [
-                'id' => $a->id,
-                'title' => $a->title,
-                'description' => $a->description,
-                'category' => $a->category,
-                'code' => $a->code,
-                'created_at' => $a->created_at,
-                'retos_count' => $a->challenges->count(),
-                'recuerdos_count' => $a->challenges->flatMap->memories->count(),
-                'bgImage' => $bg,
-                'completed_at' => $c->completed_at,
-            ];
-        });
+                return [
+                    'id' => $a->id,
+                    'title' => $a->title,
+                    'description' => $a->description,
+                    'category' => $a->category,
+                    'code' => $a->code,
+                    'created_at' => $a->created_at,
+                    'retos_count' => $a->challenges->count(),
+                    'recuerdos_count' => $a->challenges->flatMap->memories->count(),
+                    'bgImage' => $bg,
+                    'completed_at' => $c->completed_at,
+                ];
+            });
 
-        return response()->json(['albums' => $albums]);
+            return response()->json(['albums' => $albums]);
+        } catch (\Throwable $e) {
+            \Log::error('Albums completed exception: ' . $e->getMessage(), ['exception' => $e->getTraceAsString()]);
+            return response()->json([
+                'message' => 'Error interno al obtener los álbumes completados',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }
