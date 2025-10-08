@@ -43,6 +43,8 @@ class AlbumController extends Controller
                 'share_url' => $share_url,
                 'retos_count' => 0,
                 'veces_resuelto' => 0,
+                'allow_collaborators' => $album->allow_collaborators ?? false,
+                'owner' => true,
             ],
         ], 201);
     }
@@ -78,6 +80,8 @@ class AlbumController extends Controller
                         'recuerdos_count' => $album->challenges->flatMap->memories->count(),
                         'bgImage' => $bg,
                         'completed' => in_array($album->id, $completedIds),
+                        'allow_collaborators' => $album->allow_collaborators ?? false,
+                        'owner' => $album->user_id === $user->id,
                     ];
                 }),
                 'stats' => [
@@ -113,7 +117,11 @@ class AlbumController extends Controller
             $album->bg_image = url($album->bg_image);
         }
 
-        return response()->json($album);
+    // include owner info and allow_collaborators in the response wrapper
+    $payload = $album->toArray();
+    $payload['allow_collaborators'] = $album->allow_collaborators ?? false;
+    $payload['owner'] = $album->user_id === optional($request->user())->id;
+    return response()->json($payload);
     }
 
     public function updateBgImage(Request $request, Album $album)
@@ -194,6 +202,21 @@ class AlbumController extends Controller
         return response()->json(['success' => true, 'completed_at' => $completed->completed_at]);
     }
 
+    // Toggle allow_collaborators for an album (owner only)
+    public function toggleCollaborators(Request $request, Album $album)
+    {
+        $user = $request->user();
+        if ($album->user_id !== $user->id) {
+            return response()->json(['message' => 'No autorizado'], 403);
+        }
+
+        $allow = $request->input('allow') ? true : false;
+        $album->allow_collaborators = $allow;
+        $album->save();
+
+        return response()->json(['success' => true, 'allow_collaborators' => $album->allow_collaborators]);
+    }
+
     // Return completed albums for the authenticated user
     public function completed(Request $request)
     {
@@ -222,6 +245,8 @@ class AlbumController extends Controller
                     'recuerdos_count' => $a->challenges->flatMap->memories->count(),
                     'bgImage' => $bg,
                     'completed_at' => $c->completed_at,
+                    'allow_collaborators' => $a->allow_collaborators ?? false,
+                    'owner' => $a->user_id === $c->user_id,
                 ];
             });
 
