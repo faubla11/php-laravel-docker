@@ -62,7 +62,7 @@ class AlbumController extends Controller
             $completedIds = \App\Models\CompletedAlbum::where('user_id', $user->id)->pluck('album_id')->toArray();
 
             return response()->json([
-                'albums' => $albums->map(function ($album) use ($completedIds) {
+                'albums' => $albums->map(function ($album) use ($completedIds, $user) {
                     // Normalize bg_image to an absolute URL when it's a local storage path
                     $bg = $album->bg_image ?? null;
                     if ($bg && Str::startsWith($bg, '/')) {
