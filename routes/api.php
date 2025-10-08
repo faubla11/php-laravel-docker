@@ -37,6 +37,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/albums', [AlbumController::class, 'index']);
     Route::post('/albums/{album}/bg-image', [AlbumController::class, 'updateBgImage']);
+    // Completed albums
+    Route::post('/albums/{album}/complete', [AlbumController::class, 'markCompleted']);
+    Route::get('/albums/completed', [AlbumController::class, 'completed']);
     // Endpoint para solicitar signed upload URL para Supabase Storage
     Route::post('/supabase/sign-upload', [SupabaseController::class, 'signUpload']);
 });

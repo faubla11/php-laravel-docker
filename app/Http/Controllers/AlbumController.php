@@ -55,6 +55,9 @@ class AlbumController extends Controller
             ->where('user_id', $user->id)
             ->get();
 
+        // collect completed album ids for the current user
+        $completedIds = \App\Models\CompletedAlbum::where('user_id', $user->id)->pluck('album_id')->toArray();
+
         return response()->json([
             'albums' => $albums->map(function ($album) {
                 // Normalize bg_image to an absolute URL when it's a local storage path
@@ -73,6 +76,7 @@ class AlbumController extends Controller
                     'retos_count' => $album->challenges->count(),
                     'recuerdos_count' => $album->challenges->flatMap->memories->count(),
                     'bgImage' => $bg,
+                    'completed' => in_array($album->id, $completedIds),
                 ];
             }),
             'stats' => [
@@ -166,5 +170,51 @@ class AlbumController extends Controller
             'success' => false,
             'message' => 'No se recibió ningún archivo ni bg_image_url'
         ], 400);
+    }
+
+    // Mark an album as completed for the authenticated user
+    public function markCompleted(Request $request, Album $album)
+    {
+        $user = $request->user();
+
+        $completed = \App\Models\CompletedAlbum::updateOrCreate(
+            ['user_id' => $user->id, 'album_id' => $album->id],
+            ['completed_at' => now()]
+        );
+
+        return response()->json(['success' => true, 'completed_at' => $completed->completed_at]);
+    }
+
+    // Return completed albums for the authenticated user
+    public function completed(Request $request)
+    {
+        $user = $request->user();
+
+        $completed = \App\Models\CompletedAlbum::with('album.challenges.memories')
+            ->where('user_id', $user->id)
+            ->get();
+
+        $albums = $completed->map(function ($c) {
+            $a = $c->album;
+            $bg = $a->bg_image ?? null;
+            if ($bg && Str::startsWith($bg, '/')) {
+                $bg = url($bg);
+            }
+
+            return [
+                'id' => $a->id,
+                'title' => $a->title,
+                'description' => $a->description,
+                'category' => $a->category,
+                'code' => $a->code,
+                'created_at' => $a->created_at,
+                'retos_count' => $a->challenges->count(),
+                'recuerdos_count' => $a->challenges->flatMap->memories->count(),
+                'bgImage' => $bg,
+                'completed_at' => $c->completed_at,
+            ];
+        });
+
+        return response()->json(['albums' => $albums]);
     }
 }

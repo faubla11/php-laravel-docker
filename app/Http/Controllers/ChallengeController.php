@@ -113,6 +113,29 @@ class ChallengeController extends Controller
         }
 
         if ($isCorrect) {
+            // Si la respuesta es correcta, verificar si este es el ultimo reto del album
+            $album = $challenge->album()->with('challenges')->first();
+            $totalRetos = $album->challenges->count();
+
+            // Contar retos resueltos por este usuario: depende de cómo se registre - asumimos que el cliente
+            // llama a este endpoint cada vez que acierta y guardamos la marca de completado aquí cuando
+            // todas las respuestas se han desbloqueado. Para simplicidad, si el número de recuerdos del album
+            // es igual al número de retos, consideramos completado.
+            $totalRecuerdos = $album->challenges->flatMap->memories->count();
+
+            // Si el album ya tiene recuerdos iguales al total de retos, lo marcamos como completado para el usuario
+            if ($totalRecuerdos >= $totalRetos) {
+                try {
+                    $user = $request->user();
+                    \App\Models\CompletedAlbum::updateOrCreate(
+                        ['user_id' => $user->id, 'album_id' => $album->id],
+                        ['completed_at' => now()]
+                    );
+                } catch (\Exception $e) {
+                    \Log::warning('No se pudo marcar album como completado: ' . $e->getMessage());
+                }
+            }
+
             return response()->json([
                 'correct' => true,
                 'memories' => $challenge->memories,
