@@ -12,4 +12,10 @@ class Challenge extends Model
     {
         return $this->hasMany(\App\Models\Memory::class);
     }
+
+    // Relation back to the album
+    public function album()
+    {
+        return $this->belongsTo(\App\Models\Album::class);
+    }
 }

@@ -102,47 +102,58 @@ class ChallengeController extends Controller
 
     public function validateAnswer(Request $request, $challengeId)
     {
-        $challenge = \App\Models\Challenge::with('memories')->findOrFail($challengeId);
-        $answer = $request->input('answer');
+        try {
+            $challenge = \App\Models\Challenge::with('memories')->findOrFail($challengeId);
+            $answer = $request->input('answer');
 
-        $isCorrect = false;
-        if ($challenge->answer_type === 'exact' || $challenge->answer_type === 'text') {
-            $isCorrect = strtolower(trim($challenge->answer)) === strtolower(trim($answer));
-        } elseif ($challenge->answer_type === 'date') {
-            $isCorrect = $challenge->answer === $answer;
-        }
-
-        if ($isCorrect) {
-            // Si la respuesta es correcta, verificar si este es el ultimo reto del album
-            $album = $challenge->album()->with('challenges')->first();
-            $totalRetos = $album->challenges->count();
-
-            // Contar retos resueltos por este usuario: depende de cómo se registre - asumimos que el cliente
-            // llama a este endpoint cada vez que acierta y guardamos la marca de completado aquí cuando
-            // todas las respuestas se han desbloqueado. Para simplicidad, si el número de recuerdos del album
-            // es igual al número de retos, consideramos completado.
-            $totalRecuerdos = $album->challenges->flatMap->memories->count();
-
-            // Si el album ya tiene recuerdos iguales al total de retos, lo marcamos como completado para el usuario
-            if ($totalRecuerdos >= $totalRetos) {
-                try {
-                    $user = $request->user();
-                    \App\Models\CompletedAlbum::updateOrCreate(
-                        ['user_id' => $user->id, 'album_id' => $album->id],
-                        ['completed_at' => now()]
-                    );
-                } catch (\Exception $e) {
-                    \Log::warning('No se pudo marcar album como completado: ' . $e->getMessage());
-                }
+            $isCorrect = false;
+            if ($challenge->answer_type === 'exact' || $challenge->answer_type === 'text') {
+                $isCorrect = strtolower(trim($challenge->answer)) === strtolower(trim((string)$answer));
+            } elseif ($challenge->answer_type === 'date') {
+                $isCorrect = $challenge->answer === $answer;
             }
 
-            return response()->json([
-                'correct' => true,
-                'memories' => $challenge->memories,
-                'challenge' => $challenge
-            ]);
-        } else {
-            return response()->json(['correct' => false], 200);
+            if ($isCorrect) {
+                // Si la respuesta es correcta, verificar si este es el ultimo reto del album
+                $album = $challenge->album()->with('challenges')->first();
+
+                if ($album) {
+                    $totalRetos = $album->challenges->count();
+
+                    // Contar recuerdos del album
+                    $totalRecuerdos = $album->challenges->flatMap->memories->count();
+
+                    // Si el album ya tiene recuerdos iguales al total de retos, lo marcamos como completado para el usuario
+                    if ($totalRecuerdos >= $totalRetos) {
+                        try {
+                            $user = $request->user();
+                            if ($user) {
+                                \App\Models\CompletedAlbum::updateOrCreate(
+                                    ['user_id' => $user->id, 'album_id' => $album->id],
+                                    ['completed_at' => now()]
+                                );
+                            } else {
+                                \Log::info('Usuario no autenticado al intentar marcar album como completado');
+                            }
+                        } catch (\Exception $e) {
+                            \Log::warning('No se pudo marcar album como completado: ' . $e->getMessage());
+                        }
+                    }
+                } else {
+                    \Log::warning('Album relacionado no encontrado para challenge id ' . $challengeId);
+                }
+
+                return response()->json([
+                    'correct' => true,
+                    'memories' => $challenge->memories,
+                    'challenge' => $challenge
+                ]);
+            } else {
+                return response()->json(['correct' => false], 200);
+            }
+        } catch (\Throwable $e) {
+            \Log::error('validateAnswer exception: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            return response()->json(['message' => 'Error interno', 'error' => $e->getMessage()], 500);
         }
     }
 }
